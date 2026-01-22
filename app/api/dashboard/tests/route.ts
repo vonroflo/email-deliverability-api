@@ -61,15 +61,20 @@ export async function POST(request: NextRequest) {
         })
         .returning();
 
-      // Trigger background job
-      await inngest.send({
-        name: 'test/created',
-        data: {
-          testId: newTest.id,
-          userId: session.user.id,
-          mode: 'live', // Dashboard tests are always live
-        },
-      });
+      // Trigger background job (don't fail if Inngest is not configured)
+      try {
+        await inngest.send({
+          name: 'test/created',
+          data: {
+            testId: newTest.id,
+            userId: session.user.id,
+            mode: 'live', // Dashboard tests are always live
+          },
+        });
+      } catch (inngestError) {
+        console.error('Failed to queue test job:', inngestError);
+        // Continue - test is created, job will need to be processed manually or retried
+      }
 
       createdTests.push({
         id: newTest.id,

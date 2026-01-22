@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { Inbox, AlertTriangle, Clock, ChevronRight } from 'lucide-react';
@@ -42,7 +43,12 @@ const mockTests: Test[] = [
 ];
 
 export function TestHistoryMini({ tests = mockTests, limit = 5 }: TestHistoryMiniProps) {
+  const [mounted, setMounted] = useState(false);
   const displayTests = tests.slice(0, limit);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   if (displayTests.length === 0) {
     return (
@@ -87,12 +93,12 @@ export function TestHistoryMini({ tests = mockTests, limit = 5 }: TestHistoryMin
             <div className="min-w-0">
               <p className="text-sm font-medium text-text-primary truncate">{test.subject}</p>
               <p className="text-xs text-text-dimmed">
-                {new Date(test.created_at).toLocaleDateString('en-US', {
+                {mounted ? new Date(test.created_at).toLocaleDateString('en-US', {
                   month: 'short',
                   day: 'numeric',
                   hour: '2-digit',
                   minute: '2-digit',
-                })}
+                }) : '—'}
               </p>
             </div>
           </div>
