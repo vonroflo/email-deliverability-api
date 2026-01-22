@@ -76,7 +76,11 @@ export async function sendTestEmail(
   // Send to each seed inbox
   for (const { provider, email } of seedAddresses) {
     try {
-      // Build email options, only including html/text if defined
+      // Build email options - Resend requires at least html or text
+      // Ensure we always have at least one
+      const emailContent = params.html || params.text || 'Test email content';
+      
+      // Construct email options with proper typing for Resend API
       const emailOptions: {
         from: string;
         to: string;
@@ -93,14 +97,20 @@ export async function sendTestEmail(
         },
       };
 
+      // Add content - Resend requires at least one
       if (params.html) {
         emailOptions.html = params.html;
       }
       if (params.text) {
         emailOptions.text = params.text;
       }
+      // Fallback if neither is provided
+      if (!params.html && !params.text) {
+        emailOptions.text = emailContent;
+      }
 
-      const result = await resend.emails.send(emailOptions);
+      // Type assertion to satisfy Resend's strict union types
+      const result = await resend.emails.send(emailOptions as any);
 
       if (result.data?.id) {
         messageIds[provider as keyof typeof messageIds] = result.data.id;
