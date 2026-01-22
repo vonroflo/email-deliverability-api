@@ -1,13 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  InboxPlacementCard,
-  SpamScoreMeter,
   CodeBlock,
   TestHistoryMini,
 } from '@/components/playground';
@@ -20,58 +18,136 @@ import {
   Lightbulb,
   Loader2,
   Mail,
-  AlertCircle,
-  CheckCircle2,
-  TrendingUp,
+  Upload,
+  Plus,
+  X,
+  Layers,
 } from 'lucide-react';
 
-// Mock usage data - replace with actual API
-const mockUsage = { used: 47, limit: 500, plan: 'starter' };
+// Test mode type
+type TestMode = 'single' | 'bulk';
 
 // Test result type
 interface TestResult {
   id: string;
+  from: string;
+  subject: string;
   status: 'processing' | 'completed' | 'failed';
   inbox_placement?: {
-    gmail: 'inbox' | 'spam' | 'not_delivered';
-    outlook: 'inbox' | 'spam' | 'not_delivered';
-    yahoo: 'inbox' | 'spam' | 'not_delivered';
-    apple_mail: 'inbox' | 'spam' | 'not_delivered';
+    gmail: 'inbox' | 'spam' | 'not_delivered' | 'pending';
+    outlook: 'inbox' | 'spam' | 'not_delivered' | 'pending';
+    yahoo: 'inbox' | 'spam' | 'not_delivered' | 'pending';
   };
-  spam_score?: number;
+  spam_score?: string | null;
   authentication?: {
-    spf: 'pass' | 'fail';
-    dkim: 'pass' | 'fail';
-    dmarc: 'pass' | 'fail';
+    spf: 'pass' | 'fail' | 'none';
+    dkim: 'pass' | 'fail' | 'none';
+    dmarc: 'pass' | 'fail' | 'none';
   };
   recommendations?: string[];
-  completed_at?: string;
+  completed_at?: string | null;
+}
+
+// Bulk test input
+interface BulkTestInput {
+  from: string;
+  subject: string;
+  html?: string;
+  text?: string;
 }
 
 export default function PlaygroundPage() {
-  const [usage] = useState(mockUsage);
+  const [testMode, setTestMode] = useState<TestMode>('single');
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<TestResult | null>(null);
+  const [results, setResults] = useState<TestResult[]>([]);
   const [showProTip, setShowProTip] = useState(false);
   const [codeOpen, setCodeOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<'html' | 'text'>('html');
   const [codeTab, setCodeTab] = useState<'curl' | 'node' | 'python' | 'go'>('curl');
+  const [pollingIds, setPollingIds] = useState<Set<string>>(new Set());
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Single test form data
   const [formData, setFormData] = useState({
-    from: 'noreply@yourdomain.com',
+    from: '',
     subject: 'Test Email from Playground',
     html: '<h1>Hello!</h1>\n<p>This is a test email sent from the playground.</p>',
     text: 'Hello!\n\nThis is a test email sent from the playground.',
   });
 
+  // Bulk test data
+  const [bulkFromAddresses, setBulkFromAddresses] = useState<string[]>(['']);
+  const [bulkSubjects, setBulkSubjects] = useState<string[]>(['Test Email']);
+  const [bulkContent, setBulkContent] = useState({
+    html: '<h1>Hello!</h1>\n<p>This is a test email.</p>',
+    text: 'Hello!\n\nThis is a test email.',
+  });
+
+  // Poll for test results
+  const pollTestResult = useCallback(async (testId: string) => {
+    if (pollingIds.has(testId)) return;
+
+    setPollingIds(prev => new Set(prev).add(testId));
+
+    const maxAttempts = 60; // 5 minutes at 5 second intervals
+    let attempts = 0;
+
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/dashboard/tests/${testId}`);
+        if (!response.ok) return;
+
+        const data = await response.json();
+
+        setResults(prev => prev.map(r =>
+          r.id === testId ? {
+            ...r,
+            status: data.status,
+            inbox_placement: data.inbox_placement,
+            spam_score: data.spam_score,
+            authentication: data.authentication,
+            recommendations: data.recommendations,
+            completed_at: data.completed_at,
+          } : r
+        ));
+
+        if (data.status === 'completed' || data.status === 'failed') {
+          setPollingIds(prev => {
+            const next = new Set(prev);
+            next.delete(testId);
+            return next;
+          });
+          return;
+        }
+
+        attempts++;
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 5000);
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      }
+    };
+
+    poll();
+  }, [pollingIds]);
+
   // Generate live API code examples based on form data
   const generateCurlExample = () => {
+    const testData = testMode === 'single' ? formData : {
+      from: bulkFromAddresses[0] || 'noreply@yourdomain.com',
+      subject: bulkSubjects[0] || 'Test Email',
+      html: bulkContent.html,
+      text: bulkContent.text,
+    };
+
     const jsonBody = JSON.stringify(
       {
-        from: formData.from,
-        subject: formData.subject,
-        html: formData.html,
-        text: formData.text,
+        from: testData.from,
+        subject: testData.subject,
+        html: testData.html,
+        text: testData.text,
       },
       null,
       2
@@ -83,6 +159,13 @@ export default function PlaygroundPage() {
   };
 
   const generateNodeExample = () => {
+    const testData = testMode === 'single' ? formData : {
+      from: bulkFromAddresses[0] || 'noreply@yourdomain.com',
+      subject: bulkSubjects[0] || 'Test Email',
+      html: bulkContent.html,
+      text: bulkContent.text,
+    };
+
     return `const response = await fetch('https://api.deliverabilityapi.com/v1/tests', {
   method: 'POST',
   headers: {
@@ -90,10 +173,10 @@ export default function PlaygroundPage() {
     'Content-Type': 'application/json'
   },
   body: JSON.stringify({
-    from: '${formData.from}',
-    subject: '${formData.subject}',
-    html: ${JSON.stringify(formData.html)},
-    text: ${JSON.stringify(formData.text)}
+    from: '${testData.from}',
+    subject: '${testData.subject}',
+    html: ${JSON.stringify(testData.html)},
+    text: ${JSON.stringify(testData.text)}
   })
 });
 
@@ -102,6 +185,13 @@ console.log(result);`;
   };
 
   const generatePythonExample = () => {
+    const testData = testMode === 'single' ? formData : {
+      from: bulkFromAddresses[0] || 'noreply@yourdomain.com',
+      subject: bulkSubjects[0] || 'Test Email',
+      html: bulkContent.html,
+      text: bulkContent.text,
+    };
+
     return `import requests
 
 response = requests.post(
@@ -111,10 +201,10 @@ response = requests.post(
         'Content-Type': 'application/json'
     },
     json={
-        'from': '${formData.from}',
-        'subject': '${formData.subject}',
-        'html': ${JSON.stringify(formData.html)},
-        'text': ${JSON.stringify(formData.text)}
+        'from': '${testData.from}',
+        'subject': '${testData.subject}',
+        'html': ${JSON.stringify(testData.html)},
+        'text': ${JSON.stringify(testData.text)}
     }
 )
 
@@ -123,6 +213,13 @@ print(result)`;
   };
 
   const generateGoExample = () => {
+    const testData = testMode === 'single' ? formData : {
+      from: bulkFromAddresses[0] || 'noreply@yourdomain.com',
+      subject: bulkSubjects[0] || 'Test Email',
+      html: bulkContent.html,
+      text: bulkContent.text,
+    };
+
     return `package main
 
 import (
@@ -133,10 +230,10 @@ import (
 
 func main() {
     data := map[string]string{
-        "from":    "${formData.from}",
-        "subject": "${formData.subject}",
-        "html":    ${JSON.stringify(formData.html)},
-        "text":    ${JSON.stringify(formData.text)},
+        "from":    "${testData.from}",
+        "subject": "${testData.subject}",
+        "html":    ${JSON.stringify(testData.html)},
+        "text":    ${JSON.stringify(testData.text)},
     }
 
     jsonData, _ := json.Marshal(data)
@@ -161,113 +258,235 @@ func main() {
     go: generateGoExample(),
   };
 
-  const runTest = async () => {
-    if (usage.used >= usage.limit) {
+  // Run single test
+  const runSingleTest = async () => {
+    if (!formData.from || !formData.subject) {
+      alert('Please fill in From Address and Subject');
       return;
     }
 
     setLoading(true);
-    setResult(null);
+    setResults([]);
 
-    // Simulate API call - replace with actual API
-    setTimeout(() => {
-      setResult({
-        id: 'test_' + Math.random().toString(36).substr(2, 9),
-        status: 'completed',
-        inbox_placement: {
-          gmail: 'inbox',
-          outlook: 'inbox',
-          yahoo: 'spam',
-          apple_mail: 'inbox',
-        },
-        spam_score: 2.8,
-        authentication: {
-          spf: 'pass',
-          dkim: 'pass',
-          dmarc: 'pass',
-        },
-        recommendations: [
-          'Consider warming up your IP for Yahoo',
-          'Reduce image-to-text ratio for better deliverability',
-        ],
-        completed_at: new Date().toISOString(),
+    try {
+      const response = await fetch('/api/dashboard/tests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: formData.from,
+          subject: formData.subject,
+          html: formData.html,
+          text: formData.text,
+        }),
       });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to create test');
+      }
+
+      const data = await response.json();
+
+      if (data.tests && data.tests.length > 0) {
+        const newResults: TestResult[] = data.tests.map((t: any) => ({
+          id: t.id,
+          from: t.from,
+          subject: t.subject,
+          status: t.status,
+        }));
+
+        setResults(newResults);
+        setShowProTip(true);
+
+        // Start polling for results
+        newResults.forEach(r => pollTestResult(r.id));
+      }
+    } catch (error) {
+      console.error('Test error:', error);
+      alert(error instanceof Error ? error.message : 'Failed to run test');
+    } finally {
       setLoading(false);
-      setShowProTip(true);
-    }, 3000);
+    }
   };
 
-  const usagePercentage = Math.min((usage.used / usage.limit) * 100, 100);
-  const isNearLimit = usagePercentage >= 80;
-  const isAtLimit = usage.used >= usage.limit;
+  // Generate bulk test combinations
+  const generateBulkTests = (): BulkTestInput[] => {
+    const tests: BulkTestInput[] = [];
+    const fromAddresses = bulkFromAddresses.filter(a => a.trim());
+    const subjects = bulkSubjects.filter(s => s.trim());
+
+    if (fromAddresses.length === 0 || subjects.length === 0) {
+      return [];
+    }
+
+    // Generate combinations
+    for (const from of fromAddresses) {
+      for (const subject of subjects) {
+        tests.push({
+          from: from.trim(),
+          subject: subject.trim(),
+          html: bulkContent.html,
+          text: bulkContent.text,
+        });
+      }
+    }
+
+    return tests;
+  };
+
+  // Run bulk tests
+  const runBulkTests = async () => {
+    const tests = generateBulkTests();
+
+    if (tests.length === 0) {
+      alert('Please add at least one From Address and Subject');
+      return;
+    }
+
+    if (tests.length > 50) {
+      alert('Maximum 50 tests per batch');
+      return;
+    }
+
+    setLoading(true);
+    setResults([]);
+
+    try {
+      const response = await fetch('/api/dashboard/tests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tests }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to create tests');
+      }
+
+      const data = await response.json();
+
+      if (data.tests && data.tests.length > 0) {
+        const newResults: TestResult[] = data.tests.map((t: any) => ({
+          id: t.id,
+          from: t.from,
+          subject: t.subject,
+          status: t.status,
+        }));
+
+        setResults(newResults);
+        setShowProTip(true);
+
+        // Start polling for results
+        newResults.forEach(r => pollTestResult(r.id));
+      }
+    } catch (error) {
+      console.error('Bulk test error:', error);
+      alert(error instanceof Error ? error.message : 'Failed to run bulk tests');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle CSV upload
+  const handleCsvUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const lines = text.split(/\r?\n/).filter(line => line.trim());
+
+      // Parse CSV - expecting email addresses (one per line or comma-separated)
+      const emails: string[] = [];
+      for (const line of lines) {
+        // Skip header if it looks like one
+        if (line.toLowerCase().includes('email') || line.toLowerCase().includes('from')) {
+          continue;
+        }
+        // Handle comma-separated values
+        const parts = line.split(',').map(p => p.trim().replace(/^["']|["']$/g, ''));
+        emails.push(...parts.filter(p => p.includes('@')));
+      }
+
+      if (emails.length > 0) {
+        setBulkFromAddresses(emails.slice(0, 50)); // Limit to 50
+      }
+    };
+    reader.readAsText(file);
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Add bulk from address
+  const addFromAddress = () => {
+    if (bulkFromAddresses.length < 50) {
+      setBulkFromAddresses([...bulkFromAddresses, '']);
+    }
+  };
+
+  // Remove bulk from address
+  const removeFromAddress = (index: number) => {
+    setBulkFromAddresses(bulkFromAddresses.filter((_, i) => i !== index));
+  };
+
+  // Add bulk subject
+  const addSubject = () => {
+    if (bulkSubjects.length < 10) {
+      setBulkSubjects([...bulkSubjects, '']);
+    }
+  };
+
+  // Remove bulk subject
+  const removeSubject = (index: number) => {
+    setBulkSubjects(bulkSubjects.filter((_, i) => i !== index));
+  };
+
+  const bulkTestCount = generateBulkTests().length;
+  const completedCount = results.filter(r => r.status === 'completed').length;
+  const processingCount = results.filter(r => r.status === 'processing').length;
 
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-text-primary flex items-center gap-3">
-          <span className="text-3xl">🎮</span>
           Email Deliverability Playground
         </h1>
         <p className="text-text-muted mt-2">
-          Test emails visually — API code shown below for automation
+          Test email deliverability - single or bulk tests supported
         </p>
       </div>
 
-      {/* Usage Meter */}
-      <div
-        className={cn(
-          'p-4 rounded-lg border transition-all',
-          isAtLimit
-            ? 'bg-error/5 border-error/20'
-            : isNearLimit
-            ? 'bg-warning/5 border-warning/20'
-            : 'bg-brand-blue/5 border-brand-blue/20'
-        )}
-      >
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold text-text-primary">Monthly Usage</h3>
-              <span className="px-2 py-0.5 text-xs font-medium rounded bg-charcoal-700 text-text-muted capitalize">
-                {usage.plan}
-              </span>
-            </div>
-            <p className="text-xl font-bold text-text-primary mt-1">
-              {usage.used.toLocaleString()}{' '}
-              <span className="text-sm font-normal text-text-muted">
-                / {usage.limit.toLocaleString()} tests
-              </span>
-            </p>
-          </div>
-          {isNearLimit && !isAtLimit && (
-            <Link
-              href="/dashboard/usage"
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-warning/10 text-warning text-sm font-medium hover:bg-warning/20 transition-colors"
-            >
-              <TrendingUp className="h-4 w-4" />
-              Upgrade
-            </Link>
+      {/* Test Mode Toggle */}
+      <div className="flex gap-2 p-1 rounded-lg bg-charcoal-800 border border-charcoal-700 w-fit">
+        <button
+          onClick={() => setTestMode('single')}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors',
+            testMode === 'single'
+              ? 'bg-brand-blue text-white'
+              : 'text-text-muted hover:text-text-secondary'
           )}
-          {isAtLimit && (
-            <Link
-              href="/dashboard/usage"
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-error/10 text-error text-sm font-medium hover:bg-error/20 transition-colors"
-            >
-              <AlertCircle className="h-4 w-4" />
-              Limit Reached
-            </Link>
+        >
+          <Mail className="h-4 w-4" />
+          Single Test
+        </button>
+        <button
+          onClick={() => setTestMode('bulk')}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors',
+            testMode === 'bulk'
+              ? 'bg-brand-blue text-white'
+              : 'text-text-muted hover:text-text-secondary'
           )}
-        </div>
-        <div className="h-2 bg-charcoal-700 rounded-full overflow-hidden">
-          <div
-            className={cn(
-              'h-full rounded-full transition-all duration-500',
-              isAtLimit ? 'bg-error' : isNearLimit ? 'bg-warning' : 'bg-brand-blue'
-            )}
-            style={{ width: `${usagePercentage}%` }}
-          />
-        </div>
+        >
+          <Layers className="h-4 w-4" />
+          Bulk Test
+        </button>
       </div>
 
       {/* Pro Tip Banner */}
@@ -316,132 +535,265 @@ func main() {
           {/* Email Configuration Form */}
           <div className="p-6 rounded-lg bg-charcoal-800 border border-charcoal-700">
             <h2 className="text-lg font-semibold text-text-primary mb-4">
-              Configure Email
+              {testMode === 'single' ? 'Configure Email' : 'Configure Bulk Tests'}
             </h2>
 
-            <div className="space-y-4">
-              {/* From Address */}
-              <div>
-                <label className="block text-sm font-medium text-text-secondary mb-2">
-                  From Address
-                </label>
-                <select
-                  value={formData.from}
-                  onChange={(e) => setFormData({ ...formData, from: e.target.value })}
-                  className="w-full h-9 px-3 rounded-md bg-charcoal-900 border border-charcoal-700 text-text-primary text-sm focus:border-brand-blue focus:ring-1 focus:ring-brand-blue outline-none"
-                >
-                  <option value="noreply@yourdomain.com">noreply@yourdomain.com</option>
-                  <option value="support@yourdomain.com">support@yourdomain.com</option>
-                  <option value="hello@yourdomain.com">hello@yourdomain.com</option>
-                </select>
-                <p className="text-xs text-text-dimmed mt-1">
-                  Verify domains in Settings to add more
-                </p>
-              </div>
+            {testMode === 'single' ? (
+              /* Single Test Form */
+              <div className="space-y-4">
+                {/* From Address */}
+                <div>
+                  <label className="block text-sm font-medium text-text-secondary mb-2">
+                    From Address
+                  </label>
+                  <Input
+                    value={formData.from}
+                    onChange={(e) => setFormData({ ...formData, from: e.target.value })}
+                    placeholder="noreply@yourdomain.com"
+                    className="bg-charcoal-900 border-charcoal-700 text-text-primary"
+                  />
+                </div>
 
-              {/* Test Destinations */}
-              <div>
-                <label className="block text-sm font-medium text-text-secondary mb-2">
-                  Test Destinations
-                </label>
-                <div className="p-3 rounded-lg bg-charcoal-900 border border-charcoal-700">
-                  <p className="text-xs text-text-muted mb-2">Testing across:</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                      { name: 'Gmail', color: 'bg-red-500' },
-                      { name: 'Outlook', color: 'bg-blue-500' },
-                      { name: 'Yahoo', color: 'bg-purple-500' },
-                      { name: 'Apple Mail', color: 'bg-gray-500' },
-                    ].map((provider) => (
-                      <div key={provider.name} className="flex items-center gap-2 text-sm text-text-secondary">
-                        <div className={cn('w-2 h-2 rounded-full', provider.color)} />
-                        {provider.name}
+                {/* Subject */}
+                <div>
+                  <label className="block text-sm font-medium text-text-secondary mb-2">
+                    Subject Line
+                  </label>
+                  <Input
+                    value={formData.subject}
+                    onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
+                    placeholder="Welcome to our platform"
+                    className="bg-charcoal-900 border-charcoal-700 text-text-primary"
+                  />
+                </div>
+
+                {/* Email Body Tabs */}
+                <div>
+                  <label className="block text-sm font-medium text-text-secondary mb-2">
+                    Email Content
+                  </label>
+                  <div className="rounded-lg bg-charcoal-900 border border-charcoal-700 overflow-hidden">
+                    <div className="flex border-b border-charcoal-700">
+                      {(['html', 'text'] as const).map((tab) => (
+                        <button
+                          key={tab}
+                          onClick={() => setActiveTab(tab)}
+                          className={cn(
+                            'flex-1 px-4 py-2 text-sm font-medium transition-colors',
+                            activeTab === tab
+                              ? 'bg-charcoal-800 text-text-primary'
+                              : 'text-text-muted hover:text-text-secondary'
+                          )}
+                        >
+                          {tab === 'html' ? 'HTML' : 'Plain Text'}
+                        </button>
+                      ))}
+                    </div>
+                    <textarea
+                      rows={6}
+                      value={activeTab === 'html' ? formData.html : formData.text}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          [activeTab]: e.target.value,
+                        })
+                      }
+                      className="w-full p-3 bg-transparent text-text-secondary font-mono text-sm resize-none outline-none"
+                      placeholder={activeTab === 'html' ? '<h1>Hello!</h1>' : 'Plain text content'}
+                    />
+                  </div>
+                </div>
+
+                {/* Run Test Button */}
+                <Button
+                  onClick={runSingleTest}
+                  disabled={loading}
+                  className="w-full h-11 bg-brand-blue hover:bg-brand-blue-hover text-white font-medium"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Testing Deliverability...
+                    </>
+                  ) : (
+                    <>
+                      <Mail className="h-4 w-4 mr-2" />
+                      Run Test
+                    </>
+                  )}
+                </Button>
+              </div>
+            ) : (
+              /* Bulk Test Form */
+              <div className="space-y-4">
+                {/* From Addresses */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-text-secondary">
+                      From Addresses ({bulkFromAddresses.filter(a => a.trim()).length})
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleCsvUpload}
+                        accept=".csv,.txt"
+                        className="hidden"
+                      />
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-brand-blue hover:text-brand-blue-hover transition-colors"
+                      >
+                        <Upload className="h-3 w-3" />
+                        Import CSV
+                      </button>
+                      <button
+                        onClick={addFromAddress}
+                        disabled={bulkFromAddresses.length >= 50}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-brand-blue hover:text-brand-blue-hover transition-colors disabled:opacity-50"
+                      >
+                        <Plus className="h-3 w-3" />
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                    {bulkFromAddresses.map((address, index) => (
+                      <div key={index} className="flex gap-2">
+                        <Input
+                          value={address}
+                          onChange={(e) => {
+                            const newAddresses = [...bulkFromAddresses];
+                            newAddresses[index] = e.target.value;
+                            setBulkFromAddresses(newAddresses);
+                          }}
+                          placeholder="email@domain.com"
+                          className="bg-charcoal-900 border-charcoal-700 text-text-primary text-sm"
+                        />
+                        {bulkFromAddresses.length > 1 && (
+                          <button
+                            onClick={() => removeFromAddress(index)}
+                            className="p-2 text-text-muted hover:text-error transition-colors"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
                 </div>
-              </div>
 
-              {/* Subject */}
-              <div>
-                <label className="block text-sm font-medium text-text-secondary mb-2">
-                  Subject Line
-                </label>
-                <Input
-                  value={formData.subject}
-                  onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
-                  placeholder="Welcome to our platform"
-                  className="bg-charcoal-900 border-charcoal-700 text-text-primary"
-                />
-              </div>
-
-              {/* Email Body Tabs */}
-              <div>
-                <label className="block text-sm font-medium text-text-secondary mb-2">
-                  Email Content
-                </label>
-                <div className="rounded-lg bg-charcoal-900 border border-charcoal-700 overflow-hidden">
-                  <div className="flex border-b border-charcoal-700">
-                    {(['html', 'text'] as const).map((tab) => (
-                      <button
-                        key={tab}
-                        onClick={() => setActiveTab(tab)}
-                        className={cn(
-                          'flex-1 px-4 py-2 text-sm font-medium transition-colors',
-                          activeTab === tab
-                            ? 'bg-charcoal-800 text-text-primary'
-                            : 'text-text-muted hover:text-text-secondary'
+                {/* Subject Variations */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-text-secondary">
+                      Subject Variations ({bulkSubjects.filter(s => s.trim()).length})
+                    </label>
+                    <button
+                      onClick={addSubject}
+                      disabled={bulkSubjects.length >= 10}
+                      className="flex items-center gap-1 px-2 py-1 text-xs text-brand-blue hover:text-brand-blue-hover transition-colors disabled:opacity-50"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add Variation
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {bulkSubjects.map((subject, index) => (
+                      <div key={index} className="flex gap-2">
+                        <Input
+                          value={subject}
+                          onChange={(e) => {
+                            const newSubjects = [...bulkSubjects];
+                            newSubjects[index] = e.target.value;
+                            setBulkSubjects(newSubjects);
+                          }}
+                          placeholder="Subject line variation"
+                          className="bg-charcoal-900 border-charcoal-700 text-text-primary text-sm"
+                        />
+                        {bulkSubjects.length > 1 && (
+                          <button
+                            onClick={() => removeSubject(index)}
+                            className="p-2 text-text-muted hover:text-error transition-colors"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
                         )}
-                      >
-                        {tab === 'html' ? 'HTML' : 'Plain Text'}
-                      </button>
+                      </div>
                     ))}
                   </div>
-                  <textarea
-                    rows={6}
-                    value={activeTab === 'html' ? formData.html : formData.text}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        [activeTab]: e.target.value,
-                      })
-                    }
-                    className="w-full p-3 bg-transparent text-text-secondary font-mono text-sm resize-none outline-none"
-                    placeholder={activeTab === 'html' ? '<h1>Hello!</h1>' : 'Plain text content'}
-                  />
                 </div>
-              </div>
 
-              {/* Run Test Button */}
-              <Button
-                onClick={runTest}
-                disabled={loading || isAtLimit}
-                className="w-full h-11 bg-brand-blue hover:bg-brand-blue-hover text-white font-medium"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Testing Deliverability...
-                  </>
-                ) : (
-                  <>
-                    <Mail className="h-4 w-4 mr-2" />
-                    Run Test
-                  </>
-                )}
-              </Button>
+                {/* Email Content */}
+                <div>
+                  <label className="block text-sm font-medium text-text-secondary mb-2">
+                    Email Content (shared across all tests)
+                  </label>
+                  <div className="rounded-lg bg-charcoal-900 border border-charcoal-700 overflow-hidden">
+                    <div className="flex border-b border-charcoal-700">
+                      {(['html', 'text'] as const).map((tab) => (
+                        <button
+                          key={tab}
+                          onClick={() => setActiveTab(tab)}
+                          className={cn(
+                            'flex-1 px-4 py-2 text-sm font-medium transition-colors',
+                            activeTab === tab
+                              ? 'bg-charcoal-800 text-text-primary'
+                              : 'text-text-muted hover:text-text-secondary'
+                          )}
+                        >
+                          {tab === 'html' ? 'HTML' : 'Plain Text'}
+                        </button>
+                      ))}
+                    </div>
+                    <textarea
+                      rows={4}
+                      value={activeTab === 'html' ? bulkContent.html : bulkContent.text}
+                      onChange={(e) =>
+                        setBulkContent({
+                          ...bulkContent,
+                          [activeTab]: e.target.value,
+                        })
+                      }
+                      className="w-full p-3 bg-transparent text-text-secondary font-mono text-sm resize-none outline-none"
+                      placeholder={activeTab === 'html' ? '<h1>Hello!</h1>' : 'Plain text content'}
+                    />
+                  </div>
+                </div>
 
-              {isAtLimit && (
-                <div className="p-3 rounded-lg bg-error/10 border border-error/20">
-                  <p className="text-sm text-error">
-                    Monthly limit reached.{' '}
-                    <Link href="/dashboard/usage" className="underline">
-                      Upgrade plan →
-                    </Link>
+                {/* Test Count Preview */}
+                <div className="p-3 rounded-lg bg-charcoal-900 border border-charcoal-700">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-text-muted">Tests to run:</span>
+                    <span className="font-semibold text-text-primary">
+                      {bulkTestCount} {bulkTestCount === 1 ? 'test' : 'tests'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-text-dimmed mt-1">
+                    {bulkFromAddresses.filter(a => a.trim()).length} addresses × {bulkSubjects.filter(s => s.trim()).length} subjects
                   </p>
                 </div>
-              )}
-            </div>
+
+                {/* Run Bulk Tests Button */}
+                <Button
+                  onClick={runBulkTests}
+                  disabled={loading || bulkTestCount === 0}
+                  className="w-full h-11 bg-brand-blue hover:bg-brand-blue-hover text-white font-medium"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Running {bulkTestCount} Tests...
+                    </>
+                  ) : (
+                    <>
+                      <Layers className="h-4 w-4 mr-2" />
+                      Run {bulkTestCount} Tests
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* Live API Code Section */}
@@ -513,19 +865,18 @@ func main() {
           <h2 className="text-lg font-semibold text-text-primary mb-4">Test Results</h2>
 
           {/* Loading State */}
-          {loading && (
+          {loading && results.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16">
               <div className="relative">
                 <div className="h-16 w-16 rounded-full border-4 border-charcoal-700" />
                 <div className="absolute inset-0 h-16 w-16 rounded-full border-4 border-brand-blue border-t-transparent animate-spin" />
               </div>
-              <p className="mt-4 font-medium text-text-primary">Testing deliverability...</p>
-              <p className="text-sm text-text-muted mt-2">Usually takes 2-5 minutes</p>
+              <p className="mt-4 font-medium text-text-primary">Creating tests...</p>
             </div>
           )}
 
           {/* Empty State */}
-          {!loading && !result && (
+          {!loading && results.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-text-muted">
               <div className="text-6xl mb-4">📧</div>
               <p className="text-lg font-medium text-text-primary">Ready to test</p>
@@ -536,89 +887,119 @@ func main() {
           )}
 
           {/* Results */}
-          {result && result.status === 'completed' && (
-            <div className="space-y-6">
-              {/* Success Banner */}
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-success/10 border border-success/20">
-                <CheckCircle2 className="h-5 w-5 text-success shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-success">Test Completed</p>
-                  <p className="text-xs text-text-muted">
-                    {result.completed_at && new Date(result.completed_at).toLocaleString()}
-                  </p>
-                </div>
-              </div>
-
-              {/* Inbox Placement */}
-              <div>
-                <h3 className="text-sm font-semibold text-text-primary mb-3">Inbox Placement</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  {result.inbox_placement && (
-                    <>
-                      <InboxPlacementCard provider="gmail" status={result.inbox_placement.gmail} />
-                      <InboxPlacementCard provider="outlook" status={result.inbox_placement.outlook} />
-                      <InboxPlacementCard provider="yahoo" status={result.inbox_placement.yahoo} />
-                      <InboxPlacementCard provider="apple_mail" status={result.inbox_placement.apple_mail} />
-                    </>
+          {results.length > 0 && (
+            <div className="space-y-4">
+              {/* Progress Summary */}
+              {results.length > 1 && (
+                <div className="p-3 rounded-lg bg-charcoal-900 border border-charcoal-700">
+                  <div className="flex items-center justify-between text-sm mb-2">
+                    <span className="text-text-muted">Progress</span>
+                    <span className="font-medium text-text-primary">
+                      {completedCount} / {results.length} completed
+                    </span>
+                  </div>
+                  <div className="h-2 bg-charcoal-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-brand-blue rounded-full transition-all duration-500"
+                      style={{ width: `${(completedCount / results.length) * 100}%` }}
+                    />
+                  </div>
+                  {processingCount > 0 && (
+                    <p className="text-xs text-text-dimmed mt-2 flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {processingCount} tests in progress...
+                    </p>
                   )}
                 </div>
-              </div>
-
-              {/* Spam Score */}
-              {result.spam_score !== undefined && (
-                <div>
-                  <h3 className="text-sm font-semibold text-text-primary mb-3">Spam Score</h3>
-                  <SpamScoreMeter score={result.spam_score} />
-                </div>
               )}
 
-              {/* Authentication */}
-              {result.authentication && (
-                <div>
-                  <h3 className="text-sm font-semibold text-text-primary mb-3">Email Authentication</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {(['spf', 'dkim', 'dmarc'] as const).map((auth) => (
+              {/* Individual Results */}
+              <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                {results.map((result) => (
+                  <div
+                    key={result.id}
+                    className="p-4 rounded-lg bg-charcoal-900 border border-charcoal-700"
+                  >
+                    {/* Test Header */}
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-text-primary truncate">
+                          {result.subject}
+                        </p>
+                        <p className="text-xs text-text-muted truncate">{result.from}</p>
+                      </div>
                       <span
-                        key={auth}
                         className={cn(
-                          'px-3 py-1 rounded-full text-sm font-medium',
-                          result.authentication![auth] === 'pass'
+                          'px-2 py-0.5 text-xs font-medium rounded',
+                          result.status === 'completed'
                             ? 'bg-success/10 text-success'
-                            : 'bg-error/10 text-error'
+                            : result.status === 'failed'
+                            ? 'bg-error/10 text-error'
+                            : 'bg-brand-blue/10 text-brand-blue'
                         )}
                       >
-                        {auth.toUpperCase()}: {result.authentication![auth]}
+                        {result.status}
                       </span>
-                    ))}
+                    </div>
+
+                    {/* Processing State */}
+                    {result.status === 'processing' && (
+                      <div className="flex items-center gap-2 text-sm text-text-muted">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Testing deliverability...</span>
+                      </div>
+                    )}
+
+                    {/* Completed Results */}
+                    {result.status === 'completed' && (
+                      <div className="space-y-3">
+                        {/* Inbox Placement Mini */}
+                        {result.inbox_placement && (
+                          <div className="flex flex-wrap gap-2">
+                            {Object.entries(result.inbox_placement).map(([provider, status]) => (
+                              <span
+                                key={provider}
+                                className={cn(
+                                  'px-2 py-0.5 text-xs rounded',
+                                  status === 'inbox'
+                                    ? 'bg-success/10 text-success'
+                                    : status === 'spam'
+                                    ? 'bg-error/10 text-error'
+                                    : 'bg-charcoal-700 text-text-muted'
+                                )}
+                              >
+                                {provider}: {status}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Spam Score & Auth */}
+                        <div className="flex items-center gap-4 text-xs text-text-muted">
+                          {result.spam_score && (
+                            <span>Spam Score: {result.spam_score}</span>
+                          )}
+                          {result.authentication && (
+                            <span>
+                              SPF: {result.authentication.spf} |
+                              DKIM: {result.authentication.dkim} |
+                              DMARC: {result.authentication.dmarc}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* View Details Link */}
+                        <Link
+                          href={`/dashboard/tests/${result.id}`}
+                          className="text-xs text-brand-blue hover:underline"
+                        >
+                          View full details →
+                        </Link>
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
-
-              {/* Recommendations */}
-              {result.recommendations && result.recommendations.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-semibold text-text-primary mb-3">Recommendations</h3>
-                  <ul className="space-y-2">
-                    {result.recommendations.map((rec, i) => (
-                      <li
-                        key={i}
-                        className="flex items-start gap-2 text-sm p-3 rounded-lg bg-brand-blue/5 border border-brand-blue/10"
-                      >
-                        <Lightbulb className="h-4 w-4 text-brand-blue shrink-0 mt-0.5" />
-                        <span className="text-text-secondary">{rec}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* View Full Details */}
-              <Link
-                href={`/dashboard/tests/${result.id}`}
-                className="block w-full text-center px-4 py-2 rounded-lg bg-charcoal-700 text-text-secondary text-sm font-medium hover:bg-charcoal-600 transition-colors"
-              >
-                View Full Test Details →
-              </Link>
+                ))}
+              </div>
             </div>
           )}
         </div>
