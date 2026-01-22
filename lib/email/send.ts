@@ -110,7 +110,8 @@ export async function sendTestEmail(
       }
 
       // Type assertion to satisfy Resend's strict union types
-      const result = await resend.emails.send(emailOptions as any);
+      // Resend requires either html or text, which we ensure above
+      const result = await resend.emails.send(emailOptions as Parameters<typeof resend.emails.send>[0]);
 
       if (result.data?.id) {
         messageIds[provider as keyof typeof messageIds] = result.data.id;
