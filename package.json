@@ -26,7 +26,7 @@
     "inngest": "^3.49.3",
     "jose": "^6.0.11",
     "lucide-react": "^0.511.0",
-    "next": "15.1.0",
+    "next": "15.5.9",
     "postcss": "^8.5.3",
     "postgres": "^3.4.5",
     "radix-ui": "^1.4.2",
