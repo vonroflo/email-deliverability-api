@@ -77,18 +77,8 @@ export async function sendTestEmail(
   for (const { provider, email } of seedAddresses) {
     try {
       // Build email options - Resend requires at least html or text
-      // Ensure we always have at least one
-      const emailContent = params.html || params.text || 'Test email content';
-      
-      // Construct email options with proper typing for Resend API
-      const emailOptions: {
-        from: string;
-        to: string;
-        subject: string;
-        headers: Record<string, string>;
-        html?: string;
-        text?: string;
-      } = {
+      // Construct conditionally to satisfy TypeScript's strict union types
+      const baseOptions = {
         from: params.from,
         to: email,
         subject: markedSubject,
@@ -97,21 +87,25 @@ export async function sendTestEmail(
         },
       };
 
-      // Add content - Resend requires at least one
-      if (params.html) {
-        emailOptions.html = params.html;
-      }
-      if (params.text) {
-        emailOptions.text = params.text;
-      }
-      // Fallback if neither is provided
-      if (!params.html && !params.text) {
-        emailOptions.text = emailContent;
+      // Ensure at least one content type is present
+      const emailContent = params.html || params.text || 'Test email content';
+      
+      let emailOptions;
+      if (params.html && params.text) {
+        // Both html and text
+        emailOptions = { ...baseOptions, html: params.html, text: params.text };
+      } else if (params.html) {
+        // Only html
+        emailOptions = { ...baseOptions, html: params.html };
+      } else if (params.text) {
+        // Only text
+        emailOptions = { ...baseOptions, text: params.text };
+      } else {
+        // Fallback: use text
+        emailOptions = { ...baseOptions, text: emailContent };
       }
 
-      // Type assertion to satisfy Resend's strict union types
-      // Resend requires either html or text, which we ensure above
-      const result = await resend.emails.send(emailOptions as Parameters<typeof resend.emails.send>[0]);
+      const result = await resend.emails.send(emailOptions);
 
       if (result.data?.id) {
         messageIds[provider as keyof typeof messageIds] = result.data.id;
