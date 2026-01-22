@@ -29,7 +29,7 @@ export function withApiAuth<T extends Record<string, string> = Record<string, st
 ) {
   return async (
     request: NextRequest,
-    { params }: { params?: Promise<T> }
+    { params }: { params: Promise<T> }
   ): Promise<NextResponse> => {
     const startTime = Date.now();
     const authHeader = request.headers.get('Authorization');
@@ -48,7 +48,7 @@ export function withApiAuth<T extends Record<string, string> = Record<string, st
     };
 
     try {
-      const resolvedParams = params ? await params : ({} as T);
+      const resolvedParams = await params;
       const response = await handler(request, context, resolvedParams);
 
       // Log API usage (fire and forget)
