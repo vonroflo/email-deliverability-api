@@ -3,7 +3,13 @@ import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
 import { NewUser } from '@/lib/db/schema';
 
-const key = new TextEncoder().encode(process.env.AUTH_SECRET);
+function getSecretKey() {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) {
+    throw new Error('AUTH_SECRET environment variable is not set');
+  }
+  return new TextEncoder().encode(secret);
+}
 const SALT_ROUNDS = 10;
 
 export async function hashPassword(password: string) {
@@ -27,20 +33,25 @@ export async function signToken(payload: SessionData) {
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('1 day from now')
-    .sign(key);
+    .sign(getSecretKey());
 }
 
 export async function verifyToken(input: string) {
-  const { payload } = await jwtVerify(input, key, {
+  const { payload } = await jwtVerify(input, getSecretKey(), {
     algorithms: ['HS256'],
   });
   return payload as SessionData;
 }
 
 export async function getSession() {
-  const session = (await cookies()).get('session')?.value;
-  if (!session) return null;
-  return await verifyToken(session);
+  try {
+    const session = (await cookies()).get('session')?.value;
+    if (!session) return null;
+    return await verifyToken(session);
+  } catch (error) {
+    console.error('Session verification failed:', error);
+    return null;
+  }
 }
 
 export async function setSession(user: NewUser) {
