@@ -11,7 +11,6 @@ const navLinks = [
   { href: '/pricing', label: 'Pricing' },
   { href: '/docs', label: 'Docs' },
   { href: '/blog', label: 'Blog' },
-  { href: '/dashboard/playground', label: 'Playground' },
 ];
 
 export function Header({ user }: { user: User | null }) {
@@ -47,14 +46,22 @@ export function Header({ user }: { user: User | null }) {
 
           {/* Desktop Auth Buttons */}
           <div className="hidden md:flex md:items-center md:gap-4">
-            <Button variant="ghost" asChild>
-              <Link href="/sign-in" className="text-sm font-medium text-text-muted hover:text-text-primary">
-                Log In
-              </Link>
-            </Button>
-            <Button asChild className="bg-brand-blue hover:bg-brand-blue-hover text-white">
-              <Link href="/sign-up">Sign Up</Link>
-            </Button>
+            {isLoggedIn ? (
+              <Button asChild className="bg-brand-blue hover:bg-brand-blue-hover text-white">
+                <Link href="/dashboard/playground">Open Playground →</Link>
+              </Button>
+            ) : (
+              <>
+                <Button variant="ghost" asChild>
+                  <Link href="/sign-in" className="text-sm font-medium text-text-muted hover:text-text-primary">
+                    Log In
+                  </Link>
+                </Button>
+                <Button asChild className="bg-brand-blue hover:bg-brand-blue-hover text-white">
+                  <Link href="/sign-up">Sign Up</Link>
+                </Button>
+              </>
+            )}
           </div>
 
           {/* Mobile menu button */}
@@ -92,23 +99,38 @@ export function Header({ user }: { user: User | null }) {
               </Link>
             ))}
             <div className="border-t border-charcoal-700 mt-4 pt-4 space-y-2">
-              <Link
-                href="/sign-in"
-                className="block px-3 py-2 text-base font-medium text-text-muted hover:text-text-primary hover:bg-charcoal-800 rounded-md transition-colors"
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Log In
-              </Link>
-              <div className="px-3">
-                <Button
-                  asChild
-                  className="w-full bg-brand-blue hover:bg-brand-blue-hover text-white"
-                >
-                  <Link href="/sign-up" onClick={() => setMobileMenuOpen(false)}>
-                    Sign Up
+              {isLoggedIn ? (
+                <div className="px-3">
+                  <Button
+                    asChild
+                    className="w-full bg-brand-blue hover:bg-brand-blue-hover text-white"
+                  >
+                    <Link href="/dashboard/playground" onClick={() => setMobileMenuOpen(false)}>
+                      Open Playground →
+                    </Link>
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <Link
+                    href="/sign-in"
+                    className="block px-3 py-2 text-base font-medium text-text-muted hover:text-text-primary hover:bg-charcoal-800 rounded-md transition-colors"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    Log In
                   </Link>
-                </Button>
-              </div>
+                  <div className="px-3">
+                    <Button
+                      asChild
+                      className="w-full bg-brand-blue hover:bg-brand-blue-hover text-white"
+                    >
+                      <Link href="/sign-up" onClick={() => setMobileMenuOpen(false)}>
+                        Sign Up
+                      </Link>
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
