@@ -1,6 +1,64 @@
 import { z } from 'zod';
 
 // =============================================================================
+// SSRF Protection Helper
+// =============================================================================
+
+/**
+ * Validates that a webhook URL is safe (not pointing to internal services)
+ */
+function isPublicUrl(urlString: string): boolean {
+  try {
+    const url = new URL(urlString);
+
+    // Only allow HTTP(S) protocols
+    if (!['http:', 'https:'].includes(url.protocol)) {
+      return false;
+    }
+
+    const hostname = url.hostname.toLowerCase();
+
+    // Block localhost variations
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '[::1]' ||
+      hostname.endsWith('.localhost')
+    ) {
+      return false;
+    }
+
+    // Block common internal hostnames
+    if (
+      hostname === 'metadata' ||
+      hostname === 'metadata.google.internal' ||
+      hostname.endsWith('.internal') ||
+      hostname.endsWith('.local')
+    ) {
+      return false;
+    }
+
+    // Block private IP ranges (basic check for common patterns)
+    // 10.x.x.x, 172.16-31.x.x, 192.168.x.x, 169.254.x.x
+    const ipPatterns = [
+      /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/,
+      /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/,
+      /^192\.168\.\d{1,3}\.\d{1,3}$/,
+      /^169\.254\.\d{1,3}\.\d{1,3}$/,
+      /^0\.0\.0\.0$/,
+    ];
+
+    if (ipPatterns.some((pattern) => pattern.test(hostname))) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// =============================================================================
 // Request Schemas
 // =============================================================================
 
@@ -10,7 +68,13 @@ export const createTestSchema = z
     subject: z.string().min(1, 'Subject is required').max(500),
     html: z.string().optional(),
     text: z.string().optional(),
-    webhook_url: z.string().url().optional(),
+    webhook_url: z
+      .string()
+      .url()
+      .refine((url) => isPublicUrl(url), {
+        message: 'Webhook URL must be a public HTTPS endpoint',
+      })
+      .optional(),
   })
   .refine((data) => data.html || data.text, {
     message: 'Either html or text content is required',

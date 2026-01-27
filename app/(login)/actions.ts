@@ -66,8 +66,7 @@ export const signIn = validatedAction(signInSchema, async (data, formData) => {
   if (userWithTeam.length === 0) {
     return {
       error: 'Invalid email or password. Please try again.',
-      email,
-      password
+      email
     };
   }
 
@@ -81,8 +80,7 @@ export const signIn = validatedAction(signInSchema, async (data, formData) => {
   if (!isPasswordValid) {
     return {
       error: 'Invalid email or password. Please try again.',
-      email,
-      password
+      email
     };
   }
 
@@ -118,8 +116,7 @@ export const signUp = validatedAction(signUpSchema, async (data, formData) => {
   if (existingUser.length > 0) {
     return {
       error: 'Failed to create user. Please try again.',
-      email,
-      password
+      email
     };
   }
 
@@ -136,8 +133,7 @@ export const signUp = validatedAction(signUpSchema, async (data, formData) => {
   if (!createdUser) {
     return {
       error: 'Failed to create user. Please try again.',
-      email,
-      password
+      email
     };
   }
 
@@ -146,13 +142,19 @@ export const signUp = validatedAction(signUpSchema, async (data, formData) => {
   let createdTeam: typeof teams.$inferSelect | null = null;
 
   if (inviteId) {
+    // Validate invitation ID is a valid number
+    const parsedInviteId = parseInt(inviteId, 10);
+    if (Number.isNaN(parsedInviteId)) {
+      return { error: 'Invalid invitation ID.', email };
+    }
+
     // Check if there's a valid invitation
     const [invitation] = await db
       .select()
       .from(invitations)
       .where(
         and(
-          eq(invitations.id, parseInt(inviteId)),
+          eq(invitations.id, parsedInviteId),
           eq(invitations.email, email),
           eq(invitations.status, 'pending')
         )
@@ -176,7 +178,7 @@ export const signUp = validatedAction(signUpSchema, async (data, formData) => {
         .where(eq(teams.id, teamId))
         .limit(1);
     } else {
-      return { error: 'Invalid or expired invitation.', email, password };
+      return { error: 'Invalid or expired invitation.', email };
     }
   } else {
     // Create a new team if there's no invitation
@@ -189,8 +191,7 @@ export const signUp = validatedAction(signUpSchema, async (data, formData) => {
     if (!createdTeam) {
       return {
         error: 'Failed to create team. Please try again.',
-        email,
-        password
+        email
       };
     }
 
@@ -246,27 +247,18 @@ export const updatePassword = validatedActionWithUser(
 
     if (!isPasswordValid) {
       return {
-        currentPassword,
-        newPassword,
-        confirmPassword,
         error: 'Current password is incorrect.'
       };
     }
 
     if (currentPassword === newPassword) {
       return {
-        currentPassword,
-        newPassword,
-        confirmPassword,
         error: 'New password must be different from the current password.'
       };
     }
 
     if (confirmPassword !== newPassword) {
       return {
-        currentPassword,
-        newPassword,
-        confirmPassword,
         error: 'New password and confirmation password do not match.'
       };
     }
@@ -300,7 +292,6 @@ export const deleteAccount = validatedActionWithUser(
     const isPasswordValid = await comparePasswords(password, user.passwordHash);
     if (!isPasswordValid) {
       return {
-        password,
         error: 'Incorrect password. Account deletion failed.'
       };
     }
@@ -347,6 +338,20 @@ export const updateAccount = validatedActionWithUser(
   updateAccountSchema,
   async (data, _, user) => {
     const { name, email } = data;
+
+    // Check if email is being changed and if new email already exists
+    if (email !== user.email) {
+      const existingUser = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
+
+      if (existingUser.length > 0) {
+        return { error: 'Email address is already in use.' };
+      }
+    }
+
     const userWithTeam = await getUserWithTeam(user.id);
 
     await Promise.all([

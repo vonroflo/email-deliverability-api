@@ -11,6 +11,28 @@ export const processTest = inngest.createFunction(
   {
     id: 'process-test',
     retries: 3,
+    onFailure: async ({ error, event }) => {
+      // Mark test as failed when all retries are exhausted
+      // In onFailure, the original event is nested inside event.data.event
+      const originalEvent = (event as { data: { event?: { data?: { testId?: string } } } }).data?.event;
+      const testId = originalEvent?.data?.testId;
+      if (!testId) {
+        console.error('No testId found in failure event');
+        return;
+      }
+      try {
+        await db
+          .update(tests)
+          .set({
+            status: 'failed',
+            errorMessage: error?.message || 'Test processing failed after retries',
+            completedAt: new Date(),
+          })
+          .where(eq(tests.id, testId));
+      } catch (dbError) {
+        console.error('Failed to mark test as failed:', dbError);
+      }
+    },
   },
   { event: 'test/created' },
   async ({ event, step }) => {

@@ -111,8 +111,10 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url);
-    const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 100);
-    const offset = parseInt(searchParams.get('offset') || '0');
+    const parsedLimit = parseInt(searchParams.get('limit') || '20', 10);
+    const parsedOffset = parseInt(searchParams.get('offset') || '0', 10);
+    const limit = Math.min(Number.isNaN(parsedLimit) ? 20 : Math.max(1, parsedLimit), 100);
+    const offset = Number.isNaN(parsedOffset) ? 0 : Math.max(0, parsedOffset);
 
     const userTests = await db.query.tests.findMany({
       where: eq(tests.userId, session.user.id),

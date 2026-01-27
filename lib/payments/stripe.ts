@@ -130,10 +130,25 @@ export async function handleSubscriptionChange(
 
   if (status === 'active' || status === 'trialing') {
     const plan = subscription.items.data[0]?.plan;
+    const productId = typeof plan?.product === 'string'
+      ? plan.product
+      : plan?.product?.id;
+
+    // Fetch product name from Stripe if we have a product ID
+    let planName: string | null = null;
+    if (productId) {
+      try {
+        const product = await stripe.products.retrieve(productId);
+        planName = product.name;
+      } catch (error) {
+        console.error('Failed to fetch product name:', error);
+      }
+    }
+
     await updateTeamSubscription(team.id, {
       stripeSubscriptionId: subscriptionId,
-      stripeProductId: plan?.product as string,
-      planName: (plan?.product as Stripe.Product).name,
+      stripeProductId: productId ?? null,
+      planName,
       subscriptionStatus: status
     });
   } else if (status === 'canceled' || status === 'unpaid') {
