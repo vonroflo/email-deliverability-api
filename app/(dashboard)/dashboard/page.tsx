@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import {
@@ -11,28 +12,85 @@ import {
   CheckCircle2,
   AlertTriangle,
   Clock,
+  Loader2,
 } from 'lucide-react';
 import useSWR from 'swr';
 import { User } from '@/lib/db/schema';
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
-// Mock data - replace with actual API calls
-const mockStats = {
-  testsThisMonth: 47,
-  testsLimit: 500,
-  inboxRate: 87,
-  recentTests: [
-    { id: 'test_1', subject: 'Welcome Email', status: 'completed', inbox_rate: 100, created_at: '2024-01-15T10:30:00Z' },
-    { id: 'test_2', subject: 'Password Reset', status: 'completed', inbox_rate: 75, created_at: '2024-01-15T09:15:00Z' },
-    { id: 'test_3', subject: 'Newsletter', status: 'processing', created_at: '2024-01-15T08:00:00Z' },
-  ],
-};
+interface RecentTest {
+  id: string;
+  subject: string;
+  status: 'completed' | 'processing' | 'failed';
+  inbox_placement?: {
+    gmail?: string;
+    outlook?: string;
+    yahoo?: string;
+  };
+  created_at: string;
+}
+
+// Calculate inbox rate from placement data
+function calculateInboxRate(placement?: RecentTest['inbox_placement']): number | undefined {
+  if (!placement) return undefined;
+  const providers = ['gmail', 'outlook', 'yahoo'] as const;
+  let inboxCount = 0;
+  let totalCount = 0;
+
+  for (const provider of providers) {
+    const status = placement[provider];
+    if (status && status !== 'pending') {
+      totalCount++;
+      if (status === 'inbox') {
+        inboxCount++;
+      }
+    }
+  }
+
+  return totalCount > 0 ? Math.round((inboxCount / totalCount) * 100) : undefined;
+}
 
 export default function DashboardOverview() {
   const { data: user } = useSWR<User>('/api/user', fetcher);
+  const [recentTests, setRecentTests] = useState<RecentTest[]>([]);
+  const [testsLoading, setTestsLoading] = useState(true);
+  const [mounted, setMounted] = useState(false);
 
-  const usagePercent = (mockStats.testsThisMonth / mockStats.testsLimit) * 100;
+  // Fetch recent tests from API
+  useEffect(() => {
+    setMounted(true);
+
+    async function fetchRecentTests() {
+      try {
+        const response = await fetch('/api/dashboard/tests?limit=3');
+        if (response.ok) {
+          const data = await response.json();
+          setRecentTests(data.tests || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch recent tests:', err);
+      } finally {
+        setTestsLoading(false);
+      }
+    }
+
+    fetchRecentTests();
+  }, []);
+
+  // Calculate stats from recent tests
+  const completedTests = recentTests.filter((t) => t.status === 'completed');
+  const avgInboxRate =
+    completedTests.length > 0
+      ? Math.round(
+          completedTests.reduce((sum, t) => sum + (calculateInboxRate(t.inbox_placement) || 0), 0) /
+            completedTests.length
+        )
+      : 0;
+
+  const testsThisMonth = recentTests.length;
+  const testsLimit = 500;
+  const usagePercent = (testsThisMonth / testsLimit) * 100;
 
   return (
     <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-8">
@@ -52,7 +110,7 @@ export default function DashboardOverview() {
           How would you like to test?
         </h2>
         <p className="text-text-muted mb-6">
-          Both methods count toward your {mockStats.testsThisMonth}/{mockStats.testsLimit} monthly tests
+          Both methods count toward your monthly tests
         </p>
 
         <div className="grid md:grid-cols-2 gap-4">
@@ -113,8 +171,8 @@ export default function DashboardOverview() {
             <span className="text-xs text-text-dimmed">Starter Plan</span>
           </div>
           <p className="text-2xl font-bold text-text-primary mb-2">
-            {mockStats.testsThisMonth}
-            <span className="text-sm font-normal text-text-muted"> / {mockStats.testsLimit}</span>
+            {testsThisMonth}
+            <span className="text-sm font-normal text-text-muted"> / {testsLimit}</span>
           </p>
           <div className="h-2 bg-charcoal-700 rounded-full overflow-hidden">
             <div
@@ -131,10 +189,9 @@ export default function DashboardOverview() {
         <div className="p-5 rounded-lg bg-charcoal-800 border border-charcoal-700">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm text-text-muted">Avg Inbox Rate</span>
-            <span className="text-xs text-success">+5% this week</span>
           </div>
           <p className="text-2xl font-bold text-text-primary">
-            {mockStats.inboxRate}%
+            {completedTests.length > 0 ? `${avgInboxRate}%` : '—'}
           </p>
           <p className="text-xs text-text-dimmed mt-1">
             Across all providers
@@ -175,7 +232,11 @@ export default function DashboardOverview() {
           </Link>
         </div>
 
-        {mockStats.recentTests.length === 0 ? (
+        {testsLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-text-muted" />
+          </div>
+        ) : recentTests.length === 0 ? (
           <div className="p-8 text-center text-text-muted">
             <p className="mb-4">No tests yet. Run your first test to get started!</p>
             <Link
@@ -188,63 +249,68 @@ export default function DashboardOverview() {
           </div>
         ) : (
           <div className="divide-y divide-charcoal-700">
-            {mockStats.recentTests.map((test) => (
-              <Link
-                key={test.id}
-                href={`/dashboard/tests/${test.id}`}
-                className="flex items-center justify-between p-4 hover:bg-charcoal-700/50 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className={cn(
-                      'flex h-8 w-8 items-center justify-center rounded-lg',
-                      test.status === 'completed' && test.inbox_rate && test.inbox_rate >= 75
-                        ? 'bg-success/10'
-                        : test.status === 'completed'
-                        ? 'bg-warning/10'
-                        : 'bg-brand-blue/10'
-                    )}
-                  >
-                    {test.status === 'processing' ? (
-                      <Clock className="h-4 w-4 text-brand-blue animate-pulse" />
-                    ) : test.inbox_rate && test.inbox_rate >= 75 ? (
-                      <CheckCircle2 className="h-4 w-4 text-success" />
-                    ) : (
-                      <AlertTriangle className="h-4 w-4 text-warning" />
-                    )}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-text-primary">{test.subject}</p>
-                    <p className="text-xs text-text-dimmed">
-                      {new Date(test.created_at).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {test.status === 'completed' && test.inbox_rate !== undefined && (
-                    <span
+            {recentTests.map((test) => {
+              const inboxRate = calculateInboxRate(test.inbox_placement);
+              return (
+                <Link
+                  key={test.id}
+                  href={`/dashboard/tests/${test.id}`}
+                  className="flex items-center justify-between p-4 hover:bg-charcoal-700/50 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div
                       className={cn(
-                        'px-2 py-0.5 rounded text-xs font-medium',
-                        test.inbox_rate >= 75 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'
+                        'flex h-8 w-8 items-center justify-center rounded-lg',
+                        test.status === 'completed' && inboxRate !== undefined && inboxRate >= 75
+                          ? 'bg-success/10'
+                          : test.status === 'completed'
+                          ? 'bg-warning/10'
+                          : 'bg-brand-blue/10'
                       )}
                     >
-                      {test.inbox_rate}% inbox
-                    </span>
-                  )}
-                  {test.status === 'processing' && (
-                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-brand-blue/10 text-brand-blue">
-                      Processing...
-                    </span>
-                  )}
-                  <ArrowRight className="h-4 w-4 text-text-dimmed" />
-                </div>
-              </Link>
-            ))}
+                      {test.status === 'processing' ? (
+                        <Clock className="h-4 w-4 text-brand-blue animate-pulse" />
+                      ) : inboxRate !== undefined && inboxRate >= 75 ? (
+                        <CheckCircle2 className="h-4 w-4 text-success" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4 text-warning" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-text-primary">{test.subject}</p>
+                      <p className="text-xs text-text-dimmed">
+                        {mounted
+                          ? new Date(test.created_at).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : '—'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {test.status === 'completed' && inboxRate !== undefined && (
+                      <span
+                        className={cn(
+                          'px-2 py-0.5 rounded text-xs font-medium',
+                          inboxRate >= 75 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'
+                        )}
+                      >
+                        {inboxRate}% inbox
+                      </span>
+                    )}
+                    {test.status === 'processing' && (
+                      <span className="px-2 py-0.5 rounded text-xs font-medium bg-brand-blue/10 text-brand-blue">
+                        Processing...
+                      </span>
+                    )}
+                    <ArrowRight className="h-4 w-4 text-text-dimmed" />
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         )}
       </div>

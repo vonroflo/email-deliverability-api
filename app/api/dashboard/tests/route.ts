@@ -140,6 +140,11 @@ export async function GET(request: NextRequest) {
 
   } catch (error) {
     console.error('Failed to fetch tests:', error);
-    return NextResponse.json({ error: 'Failed to fetch tests' }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    // Check for common environment issues
+    if (message.includes('POSTGRES_URL')) {
+      return NextResponse.json({ error: 'Database configuration error' }, { status: 500 });
+    }
+    return NextResponse.json({ error: 'Failed to fetch tests', details: message }, { status: 500 });
   }
 }
