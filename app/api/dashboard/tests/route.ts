@@ -8,12 +8,27 @@ import { eq, desc } from 'drizzle-orm';
 // Create test(s) from dashboard - supports single and bulk
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
+    // Check session with specific error handling
+    let session;
+    try {
+      session = await getSession();
+    } catch (sessionError) {
+      console.error('Session error:', sessionError);
+      const msg = sessionError instanceof Error ? sessionError.message : 'Unknown';
+      return NextResponse.json({ error: 'Authentication error', details: msg }, { status: 500 });
+    }
+
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = await request.json();
+    // Parse request body
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
 
     // Check if bulk or single test
     const isBulk = Array.isArray(body.tests);
@@ -29,9 +44,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Get user's team (if any) through teamMembers
-    const membership = await db.query.teamMembers.findFirst({
-      where: eq(teamMembers.userId, session.user.id),
-    });
+    let membership;
+    try {
+      membership = await db.query.teamMembers.findFirst({
+        where: eq(teamMembers.userId, session.user.id),
+      });
+    } catch (dbError) {
+      console.error('Database error fetching team:', dbError);
+      const msg = dbError instanceof Error ? dbError.message : 'Unknown';
+      return NextResponse.json({ error: 'Database error', details: msg }, { status: 500 });
+    }
 
     const createdTests = [];
 
@@ -43,23 +65,31 @@ export async function POST(request: NextRequest) {
       }
 
       // Create test record
-      const [newTest] = await db
-        .insert(tests)
-        .values({
-          userId: session.user.id,
-          teamId: membership?.teamId ?? null,
-          status: 'processing',
-          fromAddress: from,
-          subject,
-          htmlContent: html ?? null,
-          textContent: text ?? null,
-          inboxPlacement: {
-            gmail: 'pending',
-            outlook: 'pending',
-            yahoo: 'pending',
-          },
-        })
-        .returning();
+      let newTest;
+      try {
+        const [inserted] = await db
+          .insert(tests)
+          .values({
+            userId: session.user.id,
+            teamId: membership?.teamId ?? null,
+            status: 'processing',
+            fromAddress: from,
+            subject,
+            htmlContent: html ?? null,
+            textContent: text ?? null,
+            inboxPlacement: {
+              gmail: 'pending',
+              outlook: 'pending',
+              yahoo: 'pending',
+            },
+          })
+          .returning();
+        newTest = inserted;
+      } catch (insertError) {
+        console.error('Database error inserting test:', insertError);
+        const msg = insertError instanceof Error ? insertError.message : 'Unknown';
+        return NextResponse.json({ error: 'Failed to create test in database', details: msg }, { status: 500 });
+      }
 
       // Trigger background job (don't fail if Inngest is not configured)
       try {
@@ -105,7 +135,16 @@ export async function POST(request: NextRequest) {
 // Get user's tests
 export async function GET(request: NextRequest) {
   try {
-    const session = await getSession();
+    // Check session with specific error handling
+    let session;
+    try {
+      session = await getSession();
+    } catch (sessionError) {
+      console.error('Session error:', sessionError);
+      const msg = sessionError instanceof Error ? sessionError.message : 'Unknown';
+      return NextResponse.json({ error: 'Authentication error', details: msg }, { status: 500 });
+    }
+
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -116,12 +155,19 @@ export async function GET(request: NextRequest) {
     const limit = Math.min(Number.isNaN(parsedLimit) ? 20 : Math.max(1, parsedLimit), 100);
     const offset = Number.isNaN(parsedOffset) ? 0 : Math.max(0, parsedOffset);
 
-    const userTests = await db.query.tests.findMany({
-      where: eq(tests.userId, session.user.id),
-      orderBy: [desc(tests.createdAt)],
-      limit,
-      offset,
-    });
+    let userTests;
+    try {
+      userTests = await db.query.tests.findMany({
+        where: eq(tests.userId, session.user.id),
+        orderBy: [desc(tests.createdAt)],
+        limit,
+        offset,
+      });
+    } catch (dbError) {
+      console.error('Database error fetching tests:', dbError);
+      const msg = dbError instanceof Error ? dbError.message : 'Unknown';
+      return NextResponse.json({ error: 'Database error', details: msg }, { status: 500 });
+    }
 
     return NextResponse.json({
       tests: userTests.map(test => ({
@@ -141,10 +187,6 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Failed to fetch tests:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
-    // Check for common environment issues
-    if (message.includes('POSTGRES_URL')) {
-      return NextResponse.json({ error: 'Database configuration error' }, { status: 500 });
-    }
     return NextResponse.json({ error: 'Failed to fetch tests', details: message }, { status: 500 });
   }
 }
